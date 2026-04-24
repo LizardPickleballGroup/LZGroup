@@ -1,0 +1,340 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Pickleball @ CP1</title>
+<link href="https://fonts.googleapis.com/css2?family=Lato:wght@400;700;900&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="style.css">
+
+</head>
+<body>
+
+
+<header style="font-family: 'Lato', Arial, sans-serif; color: #222;">
+  <div style="display: flex; align-items: center;">
+    <img src="images/lizard.png" alt="Pickleball Logo" style="height: 70px;">
+    <h1 style="font-family: 'Lato', Arial, sans-serif; color: #222; margin-right: 24px;">Pickleball Weekly Game Sessions</h1>
+  </div>
+</header>
+
+ <!-- Info bar -->
+  <div class="container">
+
+    <div class="info-bar-table-container">
+      <table class="info-bar-table">
+        <tr>
+          <th>Organiser</th>
+          <th>Pay ID</th>
+          <th>Extras</th>
+        </tr>
+        <tr>
+          <td>Maggie</td>
+          <td>Thi L 0421829XXX</td>
+          <td>Drinks included</td>
+        </tr>
+      </table>
+    </div>
+
+    <!--
+    <button onclick="goToForm()" class="btn-ios">
+      Join / RSVP
+    </button>
+    -->
+
+    <div id="loadingMsg">Loading data...</div>
+    <div id="debugStatus" style="font-size:0.95em; color:#333; margin-bottom:10px;"></div>
+    <table id="eventsTable">
+    <tr id="datesRow"></tr>
+    <tr id="playersRow"></tr>
+    <tr id="waitlistRow"></tr>
+  </table>
+
+    <button id="toggleLegendBtn" class="btn-ios" style="margin: 10px 0;">Show Legend</button>
+    <div id="legendTableContainer" style="display: none; margin-bottom: 20px;">
+      <table class="legend-table">
+        <tr>
+          <th>Status Legend</th>
+          <th>Meaning</th>
+        </tr>
+        <tr>
+          <td><span class="new">New player</span></td>
+          <td>First-time player for this event</td>
+        </tr>
+        <tr>
+          <td><span style="background: rgba(90, 200, 250, 0.15); color: #5ac8fa; padding: 6px 14px; border-radius: 20px; font-weight: 600;">Returning</span></td>
+          <td>Returning or regular player</td>
+        </tr>
+        <tr>
+          <td><span class="dropped">Dropped player</span></td>
+          <td>Player removed (cancelled participation)</td>
+        </tr>
+        <tr>
+          <td><span class="replacement">Replacement</span></td>
+          <td>Replacement for a dropped player</td>
+        </tr>
+      </table>
+    </div>
+  </div>
+
+<div id="navLeft" class="nav-left"></div>
+<div id="navRight" class="nav-right"></div>
+
+
+</body>
+<script>
+const btn = document.getElementById('toggleLegendBtn');
+const legend = document.getElementById('legendTableContainer');
+btn.addEventListener('click', function() {
+  if (legend.style.display === 'none') {
+    legend.style.display = 'block';
+    btn.textContent = 'Hide Legend';
+  } else {
+    legend.style.display = 'none';
+    btn.textContent = 'Show Legend';
+
+}
+});
+let currentPage = 1;
+const maxColumnsPerPage = 3;
+let totalPages = 1;
+let eventsData = [];
+
+const SHEET_URL = 'https://docs.google.com/spreadsheets/d/e/2PACX-1vSPHBv4ZNccoG7YUoYMNYBCI-QRJfTE9ARrXY_sHtEIuSIcBxY1BC0zJM9dbUfYdjF6OfFOzbnrTQl4/pub?gid=0&single=true&output=csv';
+
+const datesRow = document.getElementById('datesRow');
+const playersRow = document.getElementById('playersRow');
+const waitlistRow = document.getElementById('waitlistRow');
+const navLeft = document.getElementById('navLeft');
+const navRight = document.getElementById('navRight');
+const loadingMsg = document.getElementById('loadingMsg');
+const debugStatus = false; // disable debug status display
+const openFormBtn = document.getElementById('openFormBtn');
+
+window.onerror = function(message, source, lineno, colno, error) {
+  console.error('Global error:', message, 'at', source + ':' + lineno + ':' + colno, error);
+  if (debugStatus) debugStatus.innerText = 'Error: ' + message;
+};
+
+if (debugStatus) {
+  debugStatus.innerText = 'Script loaded, waiting for fetch...';
+}
+
+function goToForm() {
+  window.location.href = "form.html";
+}
+
+// CSV to JSON
+function csvToJson(csv) {
+  const lines = csv.split('\n').filter(l => l.trim() !== '');
+  const headers = lines[0].split(',').map(h => h.trim());
+
+  return lines.slice(1).map(line => {
+    const data = [];
+    let current = '';
+    let inQuotes = false;
+
+    for (let i = 0; i < line.length; i++) {
+      const char = line[i];
+
+      if (char === '"') {
+        inQuotes = !inQuotes;
+      } else if (char === ',' && !inQuotes) {
+        data.push(current.trim());
+        current = '';
+      } else {
+        current += char;
+      }
+    }
+    data.push(current.trim());
+
+    let obj = {};
+    headers.forEach((h, i) => obj[h] = data[i] || '');
+    return obj;
+  });
+}
+
+// Check if event expired
+function isExpired(dateStr, timeStr) {
+  try {
+    const [startTime] = timeStr.split('–');
+    const [hoursMinutes, meridiem] = startTime.match(/(\d{1,2}:\d{0,2})(am|pm)/i).slice(1);
+    let [hours, minutes] = hoursMinutes.split(':').map(Number);
+    if (isNaN(minutes)) minutes = 0;
+    if (meridiem.toLowerCase() === 'pm' && hours !== 12) hours += 12;
+    if (meridiem.toLowerCase() === 'am' && hours === 12) hours = 0;
+    const [day, month, year] = dateStr.split('/').map(Number);
+    const eventDate = new Date(2000 + year, month - 1, day, hours, minutes);
+    return eventDate < new Date();
+  } catch {
+    return false;
+  }
+}
+
+// Render page
+function renderPage(page) {
+  // Batch all table row HTML as strings, then set innerHTML once per row for better performance
+  let datesRowHtml = '';
+  let playersRowHtml = '';
+  let waitlistRowHtml = '';
+
+  const startIndex = (page - 1) * maxColumnsPerPage;
+  const endIndex = Math.min(startIndex + maxColumnsPerPage, eventsData.length);
+  const pageEvents = eventsData.slice(startIndex, endIndex);
+
+  pageEvents.forEach(event => {
+    const courtsText = event.courts || '-';
+    const expired = isExpired(event.date, event.time);
+
+    let costDisplay = '';
+    if (typeof event.cost === 'string' && event.cost.trim() !== '') {
+      costDisplay = event.cost.trim().startsWith('$') ? event.cost.trim() : ('$' + event.cost.trim());
+    }
+    let thClass = expired ? ' class="expired"' : '';
+    datesRowHtml += `<th${thClass}><strong>${event.date}, ${event.time}</strong><br>Courts: ${courtsText}<br>Cap: ${event.cap || '-'}` + (costDisplay ? ` | Cost: ${costDisplay}` : '') + `</th>`;
+
+    let playersClass = expired ? ' class="expired"' : '';
+    playersRowHtml += `<td${playersClass}><strong>Players ${event.players.length >= (event.cap || event.players.length) ? '(FULL)' : ''}</strong><ol>` +
+      event.players.map(p => {
+        if (p.status === 'dropped' && p.replacement) {
+          return `<li><span class="player-dropped">${p.name}</span> → <span class="player-replacement">${p.replacement}</span></li>`;
+        } else {
+          let className = '';
+          if (p.status === 'new') className = 'player-new';
+          if (p.status === 'dropped') className = 'player-dropped';
+          return `<li class="${className}">${p.name}</li>`;
+        }
+      }).join('') + `</ol></td>`;
+
+    let waitlistClass = expired ? ' class="expired"' : '';
+    waitlistRowHtml += `<td${waitlistClass}><strong>Waiting List</strong><ol>` +
+      event.waitlist.map(p => `<li>${p.name}</li>`).join('') + `</ol></td>`;
+  });
+
+  datesRow.innerHTML = datesRowHtml;
+  playersRow.innerHTML = playersRowHtml;
+  waitlistRow.innerHTML = waitlistRowHtml;
+
+  navLeft.innerHTML = '';
+  navRight.innerHTML = '';
+
+  if (currentPage > 1) {
+    const back = document.createElement('img');
+    back.src = 'images/arrow_left.png';
+    back.style.height = '45px';
+    back.style.opacity = '0.5';
+    back.onmouseover = function() { this.style.opacity = '1'; };
+    back.onmouseout = function() { this.style.opacity = '0.5'; };
+
+    back.onclick = () => { currentPage--; renderPage(currentPage); };
+    navLeft.appendChild(back);
+  }
+
+  if (currentPage < totalPages) {
+    const forward = document.createElement('img');
+    forward.src = 'images/arrow_right.png';
+    forward.style.height = '45px';
+    forward.style.opacity = '0.5';
+    forward.onmouseover = function() { this.style.opacity = '1'; };
+    forward.onmouseout = function() { this.style.opacity = '0.5'; };
+    forward.onclick = () => { currentPage++; renderPage(currentPage); };
+    navRight.appendChild(forward);
+  }
+
+
+}
+
+// Load data
+console.log('Fetch started:', SHEET_URL);
+if (debugStatus) debugStatus.innerText = 'Fetching CSV...';
+fetch(SHEET_URL)
+  .then(res => {
+    console.log('Fetch response:', res.status, res.ok);
+    if (!res.ok) throw new Error('Network response was not ok: ' + res.status);
+    return res.text();
+  })
+  .then(csv => {
+    console.log('CSV length:', csv.length);
+    const rows = csvToJson(csv);
+    console.log('Parsed rows count:', rows.length);
+    // Get unique sessions
+    const sessionsMap = {};
+    rows.forEach(r => {
+      const id = (r.session_id || '').trim();
+      if (!sessionsMap[id]) {
+        sessionsMap[id] = {
+          session_id: r.session_id,
+          date: r.date,
+          time: r.time,
+          courts: r.courts,
+          cap: Number(r.cap),
+          cost: r.cost,
+          players: [],
+          waitlist: []
+        };
+      }
+      const ev = sessionsMap[id];
+      const type = (r.list_type || '').toLowerCase();
+      const personName = [
+        (r.firstname || '').trim(),
+        (r.lastname || '').trim()
+      ].filter(Boolean).join(' ');
+
+      if (type === 'player') {
+        ev.players.push(
+          { 
+            name: personName,
+            status: (r.status || '').trim(),
+            replacement: (r.replacement || '').trim()
+          }
+        );
+      } 
+      else if (type === 'waitlist') {
+        ev.waitlist.push({name: personName});
+      }
+    });
+
+    eventsData = Object.values(sessionsMap);
+    console.log('Events data:', eventsData);
+    totalPages = Math.ceil(eventsData.length / maxColumnsPerPage);
+    renderPage(currentPage);
+    loadingMsg.style.display = 'none';
+    if (debugStatus) debugStatus.innerText = 'Data loaded successfully.';
+  })
+  .catch(err => {
+    console.error('Error loading sheet:', err);
+    loadingMsg.innerText = 'Failed to load data';
+    if (debugStatus) debugStatus.innerText = 'Error loading data: ' + err.message;
+  });
+
+// Open form page
+// openFormBtn.addEventListener('click', () => {
+//   window.open('event_invitation.html', '_blank');
+// });
+
+// Toggle map/address section
+const toggleMapBtn = document.getElementById('toggleMapBtn');
+const mapSection = document.getElementById('mapSection');
+if (toggleMapBtn && mapSection) {
+  toggleMapBtn.addEventListener('click', function() {
+    if (mapSection.style.display === 'none' || mapSection.style.display === '') {
+      mapSection.style.display = 'block';
+      toggleMapBtn.textContent = 'Hide Where';
+    } else {
+      mapSection.style.display = 'none';
+      toggleMapBtn.textContent = 'Where';
+    }
+  });
+}
+</script>
+
+<div id="footer"></div>
+
+<!-- Footer is loaded asynchronously after all main content and scripts -->
+<script>
+  fetch('footer.html')
+    .then(res => res.text())
+    .then(html => { document.getElementById('footer').innerHTML = html; });
+</script>
+</body>
+</html>
